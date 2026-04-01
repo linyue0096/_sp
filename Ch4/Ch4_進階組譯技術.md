@@ -1,358 +1,260 @@
 # 第四章 進階組譯技術
 
-## 4.1 巨集處理器
+## 4.1 條件式組譯與巨集處理
 
-巨集處理器是組譯器的重要擴展功能，允許定義可重複使用的程式碼片段，提高程式碼的可維護性與可讀性。
+### 條件組譯指令
 
-### 巨集的定義與呼叫
+條件式組譯允許程式碼根據特定條件進行選擇性組譯，這在開發不同平台版本或偵錯版本時特別有用。
 
-```asm
-; 巨集定義
-%macro PRINT_STRING 1
-    mov dx, %1
-    mov ah, 09h
-    int 21h
-%endmacro
+```assembly
+; 根據不同的目標平台進行條件組譯
+IF PLATFORM = 'WINDOWS'
+    MOV AX, 4Ch         ; Windows 系統呼叫
+    INT 21h
+ELSE IF PLATFORM = 'LINUX'
+    MOV EAX, 1         ; Linux exit 系統呼叫
+    INT 80h
+ENDIF
 
-; 巨集呼叫
-PRINT_STRING msg_buffer
+; 根據偵錯模式進行條件組譯
+IFDEF DEBUG
+    ; 輸出偵錯資訊
+    LEA DX, debugMsg
+    MOV AH, 09h
+    INT 21h
+ENDIF
 ```
 
-### 巨集處理器架構
+### 巨集定義與展開
 
-```python
-class MacroProcessor:
-    def __init__(self):
-        self.macros = {}
-        self.current_macro = None
-        self.expansion_buffer = []
-        
-    def define_macro(self, name, params, body):
-        self.macros[name] = {
-            'params': params,
-            'body': body,
-            'local_labels': []
-        }
-        
-    def expand_macro(self, name, args):
-        if name not in self.macros:
-            raise ValueError(f'Undefined macro: {name}')
-            
-        macro = self.macros[name]
-        
-        # 建立參數映射
-        param_map = dict(zip(macro['params'], args))
-        
-        # 展開巨集主體
-        expanded = []
-        for line in macro['body']:
-            expanded_line = line
-            for param, value in param_map.items():
-                expanded_line = expanded_line.replace(param, value)
-            expanded.append(expanded_line)
-            
-        return expanded
+巨集是組譯語言中的重要抽象機制，可以將重複的程式碼片段定義為可重複使用的單元：
+
+```assembly
+; 定義巨集
+MACRO PUSH_REGS
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+ENDMACRO
+
+MACRO POP_REGS
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+ENDMACRO
+
+; 使用巨集
+PUSH_REGS
+; ... 主要程式碼 ...
+POP_REGS
 ```
 
-### 巢狀巨集與遞迴巨集
+### 帶參數的巨集
 
-```asm
-; 巢狀巨集範例
-%macro PUSH_REGS 0
-    push ax
-    push bx
-    push cx
-    push dx
-%endmacro
+進階巨集可以接受參數，使程式碼更加靈活：
 
-%macro POP_REGS 0
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-%endmacro
+```assembly
+MACRO LOAD_REG reg, value
+    MOV reg, value
+ENDMACRO
 
-%macro SAVE_CONTEXT 0
-    PUSH_REGS
-%endmacro
-
-%macro RESTORE_CONTEXT 0
-    POP_REGS
-%endmacro
+; 呼叫巨集
+LOAD_REG AX, 100
+LOAD_REG BX, 200
 ```
 
-## 4.2 條件組譯
+## 4.2 多模組連結與符號解析
 
-條件組譯允許根據特定條件選擇性地包含或排除程式碼區塊。
+### 模組化程式設計
 
-### 條件指示
+大型程式通常分割為多個原始檔案，分別組譯後再連結成單一執行檔：
 
-```asm
-%ifdef DEBUG
-    mov dx, debug_msg
-    mov ah, 09h
-    int 21h
-%endif
+```assembly
+; === main.asm ===
+EXTERN init_display   ; 宣告外部符號
+EXTERN draw_pixel
 
-%ifndef RELEASE
-    ; 開發專用程式碼
-%endif
-
-%if ARCH == 32
-    ; 32位元特定程式碼
-%elif ARCH == 64
-    ; 64位元特定程式碼
-%else
-    ; 其他架構
-%endif
-```
-
-### 條件組譯實作
-
-```python
-class ConditionalAssembler:
-    def __init__(self):
-        self.conditions = {
-            'DEBUG': False,
-            'RELEASE': True,
-            'ARCH': 32
-        }
-        
-    def process_conditional(self, lines):
-        result = []
-        i = 0
-        
-        while i < len(lines):
-            line = lines[i].strip()
-            
-            if line.startswith('%ifdef'):
-                symbol = line.split()[1]
-                self.process_ifdef(symbol, lines, i)
-            elif line.startswith('%ifndef'):
-                symbol = line.split()[1]
-                self.process_ifndef(symbol, lines, i)
-            elif line.startswith('%if'):
-                condition = line[3:].strip()
-                self.process_if(condition, lines, i)
-            elif line.startswith('%endif'):
-                pass
-            else:
-                result.append(line)
-                
-            i += 1
-            
-        return result
-        
-    def evaluate_condition(self, condition):
-        # 簡化的條件表達式評估
-        if '==' in condition:
-            left, right = condition.split('==')
-            return self.conditions.get(left.strip(), 0) == int(right.strip())
-        elif '!=' in condition:
-            left, right = condition.split('!=')
-            return self.conditions.get(left.strip(), 0) != int(right.strip())
-        return condition.strip() in self.conditions
-```
-
-## 4.3 段式記憶體管理
-
-段（Section）是組織程式碼與資料的基本單位，不同的段具有不同的屬性與用途。
-
-### 常見區段
-
-```asm
-section .data               ; 已初始化資料段
-    message db "Hello$"
-    number  dw 1234
-    buffer  resb 256         ; 預留空間
-
-section .bss                ; 未初始化資料段
-    temp_buffer resb 64
-    counter    resw 1
-
-section .text                ; 程式碼段
-    global _start
+global _start
 _start:
-    mov ax, message
+    CALL init_display
+    MOV CX, 100
+loop:
+    CALL draw_pixel
+    LOOP loop
+    RET
+
+; === display.asm ===
+public init_display
+init_display:
+    MOV AX, 13h
+    INT 10h
+    RET
+
+public draw_pixel
+draw_pixel:
+    ; 繪製像素的程式碼
+    RET
 ```
 
-### 區段屬性
+### 符號解析機制
 
-```asm
-section .text progbits alloc exec nowrite
+連結器需要解析跨模組的符號引用：
 
-section .data write
+1. **強符號與弱符號**：強符號優先於弱符號
+2. **未定義符號**：需要在其他模組中查找定義
+3. **多重定義**：需要處理符號重複定義的情況
 
-section .bss nobits alloc nowrite
-```
+### 區段與連結
 
-### 多段程式範例
-
-```asm
-section .data
-    msg db "Enter number:", "$"
-    result db "Result: $"
-
-section .bss
-    input_buffer resb 10
-    output_buffer resb 20
-
-section .text
-    global main
-main:
-    mov dx, msg
-    mov ah, 09h
-    int 21h
-    
-    mov dx, input_buffer
-    mov ah, 0Ah
-    int 21h
-    
-    ; 處理輸入
-    ; ...
-    
-    mov dx, result
-    mov ah, 09h
-    int 21h
-```
-
-## 4.4 連結器基礎
-
-連結器（Linker）負責將多個目標檔案合併成單一可執行檔，並處理符號解析與位址重定位。
-
-### 連結器的主要功能
-
-1. **符號解析**：解析跨檔案的符號引用
-2. **段合併**：合併相同類型的區段
-3. **位址重定位**：調整相對位址
-4. **符號綁定**：解析外部符號
-
-### 連結腳本範例
+不同模組的區段需要在連結階段合併：
 
 ```
-INPUT(test.o library.o)
-OUTPUT(test.elf)
+模組A: .text, .data, .bss
+模組B: .text, .data, .bss
+                ↓ 連結
+最終輸出: .text, .data, .bss (合併)
+```
 
-SECTIONS
-{
-    .text 0x1000 : {
-        *(.text)
-    }
-    
-    .data 0x2000 : {
-        *(.data)
-    }
-    
-    .bss 0x3000 : {
-        *(.bss)
+## 4.3 指令最佳化技術
+
+### 常見最佳化策略
+
+組譯器可以實施多種指令最佳化：
+
+1. **指令序列簡化**：消除冗餘指令
+   ```assembly
+   ; 最佳化前
+   MOV AX, 0
+   ADD AX, BX
+   
+   ; 最佳化後
+   MOV AX, BX
+   ```
+
+2. **定址模式優化**：使用更高效的定址方式
+   ```assembly
+   ; 最佳化前
+   MOV AX, [BX]
+   ADD AX, [BX+2]
+   
+   ; 最佳化後 (使用索引)
+   LEA SI, [BX]
+   LODSW
+   ADD AX, [SI]
+   ```
+
+3. **跳躍目標最佳化**：縮短跳躍距離
+   ```assembly
+   ; 重新排列程式碼以縮短跳躍距離
+   ```
+
+### 指令排程
+
+指令排程可以提高管線效率：
+
+```assembly
+; 避免管線停滯
+; 最佳化前
+MOV AX, [BX]
+ADD CX, AX
+MOV [DX], AX
+
+; 最佳化後 - 插入無關指令填補延遲
+MOV AX, [BX]
+MOV SI, offset
+ADD CX, AX
+```
+
+## 4.4 指令編碼與解碼
+
+### 指令編碼格式
+
+不同架構的指令編碼格式各異，以x86為例：
+
+```
+[前綴] [運碼] [ModR/M] [SIB] [位移] [立即值]
+```
+
+- **前綴**：可選的修飾前綴
+- **運碼**：主要操作碼（1-3位元組）
+- **ModR/M**：運算元指定
+- **SIB**：縮放索引基底
+- **位移**：記憶體位址偏移
+- **立即值**：常數運算元
+
+### 編碼範例
+
+```c
+// x86 指令編碼範例
+uint8_t encode_mov_rm32_imm32(uint8_t modrm, uint32_t imm) {
+    uint8_t opcode[] = {0xB8 + (modrm & 0x38) >> 3}; // MOV r32, imm32
+    // ... 組合位元組序列
+}
+```
+
+### 反組譯
+
+反組譯是將機器碼轉換回組譯語言的過程：
+
+```c
+void disassemble(uint8_t *code, int length) {
+    while (length > 0) {
+        Instruction ins = decode_instruction(code);
+        printf("%s ", ins.mnemonic);
+        print_operands(&ins);
+        printf("\n");
+        code += ins.length;
+        length -= ins.length;
     }
 }
 ```
 
-### 簡單連結器實作
+## 4.5 錯誤處理與偵錯資訊
 
-```python
-class Linker:
-    def __init__(self):
-        self.object_files = []
-        self.sections = {}
-        self.symbols = {}
-        
-    def add_object_file(self, obj_file):
-        self.object_files.append(obj_file)
-        
-    def link(self, output_file):
-        # 合併區段
-        self.merge_sections()
-        
-        # 解析符號
-        self.resolve_symbols()
-        
-        # 執行重定位
-        self.relocate()
-        
-        # 寫出輸出檔案
-        self.write_output(output_file)
-        
-    def merge_sections(self):
-        base_address = 0x1000
-        
-        for obj in self.object_files:
-            for section_name, section_data in obj.sections.items():
-                if section_name not in self.sections:
-                    self.sections[section_name] = bytearray()
-                    
-                offset = len(self.sections[section_name])
-                self.sections[section_name].extend(section_data)
-                
-    def resolve_symbols(self):
-        # 解析外部符號
-        for obj in self.object_files:
-            for symbol_name, symbol_ref in obj.unresolved_symbols.items():
-                if symbol_name in self.symbols:
-                    # 更新引用位址
-                    pass
+### 錯誤類型
+
+組譯過程中可能發生的錯誤包括：
+
+1. **語法錯誤**：指令格式不正確
+2. **語意錯誤**：操作數類型不符或位址無效
+3. **符號錯誤**：未定義的符號或重複定義
+4. **範圍錯誤**：數值超出有效範圍
+
+### 錯誤報告機制
+
+```c
+void error(int line, int column, ErrorType type, char *message) {
+    fprintf(stderr, "Error at line %d, column %d: %s\n", line, column, message);
+    errorCount++;
+}
+
+void warning(int line, int column, char *message) {
+    fprintf(stderr, "Warning at line %d, column %d: %s\n", line, column, message);
+}
 ```
 
-## 4.5 交叉組譯
+### 偵錯資訊產生
 
-交叉組譯（Cross-Assembly）是指在一种平台上产生另一种平台的可执行代码。
+組譯器可以產生偵錯資訊供偵錯器使用：
 
-### 交叉組譯的用途
+```assembly
+; 產生行號資訊
+.line 10
+    MOV AX, 10
 
-1. **嵌入式系統開發**：在PC上為嵌入式設備編譯
-2. **作業系統開發**：為新架構編譯系統軟體
-3. **測試與模擬**：在不同環境下測試程式
-
-### 交叉組譯工具鏈
-
-```bash
-# ARM 交叉編譯
-arm-none-eabi-as -o output.o input.s
-arm-none-eabi-ld -o output.elf output.o
-arm-none-eabi-objcopy -O binary output.elf output.bin
-
-# MIPS 交叉編譯
-mips-elf-as -o output.o input.s
-mips-elf-ld -o output.elf output.o
-
-# RISC-V 交叉編譯
-riscv64-unknown-elf-as -o output.o input.s
-riscv64-unknown-elf-ld -o output.elf output.o
+; 產生區段資訊
+.section .text,"x"
+.debug_line
+    ; 行號表
 ```
 
-### 目標碼格式轉換
+### DWARF 格式
 
-```bash
-# 從 ELF 提取二進位
-objcopy -O binary input.elf output.bin
+現代Unix系統使用DWARF格式作為偵錯資訊標準：
 
-# 查看目標檔案內容
-objdump -d input.o
-objdump -h input.o
-
-# 反組譯
-objdump -d -M intel input.elf
-```
-
-### 目標檔案格式
-
-```python
-# ELF 檔案結構
-class ELFFile:
-    def __init__(self):
-        self.header = {
-            'e_ident': b'\x7fELF',
-            'e_type': 2,           # ET_EXEC
-            'e_machine': 0x3E,     # EM_X86_64
-            'e_entry': 0x1000,
-            'e_phoff': 64,
-            'e_shoff': 0,
-            'e_flags': 0,
-            'e_ehsize': 64,
-            'e_phentsize': 56,
-            'e_phnum': 2,
-        }
-        self.program_headers = []
-        self.sections = []
-```
+- **CU（Compilation Unit）**：編譯單元資訊
+- **.line**：行號資訊
+- **.debug_info**：型別與範圍資訊
+- **.debug_abbrev**：縮寫表

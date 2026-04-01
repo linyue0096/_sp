@@ -1,293 +1,224 @@
 # 第三章 組譯器核心機制
 
-## 3.1 兩遍掃描架構
+## 3.1 詞彙分析器設計
 
-組譯器通常採用兩遍掃描（Two-Pass）架構來處理組譯語言程式，這是因為組譯語言中可能存在向前參考（Forward Reference）的問題。
+詞彙分析器（Lexer）是組譯器的第一個處理階段，負責將原始程式碼轉換為一連串的詞彙單元（Token）。詞彙分析器的主要任務包括：
 
-### 第一遍（Pass 1）
+### 詞彙單元類型
 
-主要任務：
-1. 識別所有標籤並建立符號表
-2. 計算每個指令的位址
-3. 處理巨集定義
-4. 記錄段定義與屬性
+組譯語言中的詞彙單元可分為以下類別：
 
-```
-第一遍掃描流程：
-  初始化位址計數器
-  迴圈：
-    讀取下一行
-    如果是指令：
-      更新位址計數器
-    如果是標籤：
-      將標籤與目前位址存入符號表
-    如果是巨集定義：
-      暫存巨集定義
-  直到檔案結束
-```
+1. **指令助記符**：如 `MOV`、`ADD`、`JMP` 等操作碼
+2. **標籤**：用於標示程式位置的符號
+3. **暫存器名稱**：如 `AX`、`BX`、`R0`、`R1` 等
+4. **常數**：包括數值常數與字串常數
+5. **偽指令**：如 `DB`、`DW`、`EQU`、`ORG` 等
+6. **分隔符號**：如逗號、括號、冒號等
 
-### 第二遍（Pass 2）
+### 詞彙分析演算法
 
-主要任務：
-1. 翻譯指令為機器碼
-2. 解析符號引用
-3. 產生目標檔案
-4. 處理錯誤
+詞彙分析器通常採用有限狀態機（Finite State Machine）來識別各類型的詞彙單元：
 
-```
-第二遍掃描流程：
-  初始化位址計數器
-  迴圈：
-    讀取下一行
-    如果是指令：
-      查詢符號表取得運算元位址
-      產生機器碼
-      更新位址計數器
-  直到檔案結束
+```c
+typedef enum {
+    TOKEN_INSTRUCTION,
+    TOKEN_LABEL,
+    TOKEN_REGISTER,
+    TOKEN_NUMBER,
+    TOKEN_STRING,
+    TOKEN_DIRECTIVE,
+    TOKEN_SEPARATOR
+} TokenType;
+
+typedef struct {
+    TokenType type;
+    char value[256];
+    int line;
+    int column;
+} Token;
 ```
 
-## 3.2 詞法分析
+### 狀態轉移圖
 
-詞法分析器（Lexer）是組譯器的第一個元件，負責將輸入的文字流切割成記號（Token）。
+詞彙分析器透過狀態轉移來識別不同的詞彙單元：
+- 初始狀態 → 識別空白與註解
+- 識別字母開頭 → 可能為指令或標籤
+- 識別數字開頭 → 可能為常數
+- 識別特殊符號 → 為分隔符號或運算子
 
-### 記號類型
+## 3.2 語法分析器設計
 
-1. **標籤（Label）**：識別符號後接冒號
-2. **指令（Instruction）**：操作碼助記符
-3. **運算元（Operand）**：暫存器、立即值、位址
-4. **指示（Directive）**：以句點開頭的控制指令
-5. **註解（Comment）**：分號後的文字
+語法分析器（Parser）負責驗證詞彙單元序列是否符合組譯語言的語法規則，並建立語法樹（Syntax Tree）來表示程式的結構。
 
-### 詞法分析器範例
+### 語法規則定義
 
-```python
-import re
+組譯語言的語法通常以上下文無關文法（Context-Free Grammar）來描述：
 
-class Lexer:
-    TOKEN_PATTERNS = [
-        (r'^[a-zA-Z_][a-zA-Z0-9_]*:', 'LABEL'),
-        (r'^(mov|add|sub|mul|div|jmp|je|jne|call|ret|push|pop)$', 'INSTRUCTION'),
-        (r'^(db|dw|dd|dq|section|global|extern)$', 'DIRECTIVE'),
-        (r'^(ax|bx|cx|dx|si|di|bp|sp|ah|al|bh|bl|ch|cl|dh|dl)$', 'REGISTER'),
-        (r'^0x[0-9a-fA-F]+', 'IMMEDIATE_HEX'),
-        (r'^[0-9]+', 'IMMEDIATE_DEC'),
-        (r'^;.*', 'COMMENT'),
-        (r'^\s+', 'WHITESPACE'),
-    ]
-    
-    def tokenize(self, source):
-        tokens = []
-        lines = source.split('\n')
-        
-        for line_num, line in enumerate(lines, 1):
-            line = line.split(';')[0].strip()
-            if not line:
-                continue
-                
-            pos = 0
-            while pos < len(line):
-                matched = False
-                
-                for pattern, token_type in self.TOKEN_PATTERNS:
-                    match = re.match(pattern, line[pos:])
-                    if match:
-                        value = match.group(0)
-                        if token_type not in ('WHITESPACE', 'COMMENT'):
-                            tokens.append({
-                                'type': token_type,
-                                'value': value,
-                                'line': line_num
-                            })
-                        pos += len(value)
-                        matched = True
-                        break
-                        
-                if not matched:
-                    raise SyntaxError(f'Unknown token at line {line_num}: {line[pos]}')
-                    
-        return tokens
+```
+instruction ::= label? opcode operands?
+operands    ::= operand (',' operand)*
+operand     ::= register | immediate | memory | label
+memory      ::= '[' address ']'
+address     ::= register ('+' number)? | number
+```
+
+### 語法分析方法
+
+常用的語法分析方法包括：
+
+1. **遞迴下降分析法**：適用於簡單的語法結構
+2. **LR分析法**：適用於較複雜的語法結構
+3. **LL(k)分析法**：從左到右、最左推導
+
+### 語法樹結構
+
+語法樹的節點類型包括：
+
+```c
+typedef enum {
+    NODE_INSTRUCTION,
+    NODE_LABEL,
+    NODE_OPERAND,
+    NODE_EXPRESSION
+} NodeType;
+
+typedef struct ASTNode {
+    NodeType type;
+    char *value;
+    struct ASTNode **children;
+    int childCount;
+} ASTNode;
 ```
 
 ## 3.3 符號表管理
 
-符號表是組譯器的核心資料結構，用於儲存所有標籤與其相關資訊。
+符號表（Symbol Table）是組譯器用於管理程式碼中所有符號的資料結構，包括標籤、巨集定義、與常數等。
 
 ### 符號表結構
 
-```python
-class SymbolTable:
-    def __init__(self):
-        self.symbols = {}
-        self.current_section = None
-        self.location_counter = 0
-        
-    def add_symbol(self, name, address, section, symbol_type='label'):
-        self.symbols[name] = {
-            'address': address,
-            'section': section,
-            'type': symbol_type,
-            'defined': True
-        }
-        
-    def add_forward_ref(self, name, section, line):
-        if name not in self.symbols:
-            self.symbols[name] = {
-                'section': section,
-                'type': 'unknown',
-                'defined': False,
-                'references': [line]
-            }
-        else:
-            if 'references' not in self.symbols[name]:
-                self.symbols[name]['references'] = []
-            self.symbols[name]['references'].append(line)
-            
-    def resolve_symbol(self, name):
-        if name in self.symbols:
-            return self.symbols[name]['address']
-        return None
-    
-    def is_defined(self, name):
-        return name in self.symbols and self.symbols[name].get('defined', False)
+符號表通常以雜湊表（Hash Table）實現，以提供高效的查詢效能：
+
+```c
+typedef struct Symbol {
+    char *name;
+    SymbolType type;          // 標籤、常數、巨集等
+    Address value;           // 位址或數值
+    int scope;               // 作用域層級
+    struct Symbol *next;     // 衝突鏈結
+} Symbol;
+
+typedef struct SymbolTable {
+    Symbol **buckets;
+    int size;
+    struct SymbolTable *parent;  // 父作用域
+} SymbolTable;
 ```
 
-### 符號表操作
+### 符號類型
 
-1. **新增符號**：建立新的標籤項目
-2. **查詢符號**：取得位址或屬性
-3. **更新符號**：修正位址或屬性
-4. **刪除符號**：移除未使用的項目
+符號表中的符號可分為多種類型：
 
-## 3.4 指令翻譯與目標碼生成
+1. **標籤（Label）**：代表程式碼或資料的位址
+2. **常數（Constant）**：使用 `EQU` 或 `SET` 定義的常數
+3. **巨集（Macro）**：巨集定義的名稱
+4. **外部符號（External Symbol）**：用於跨模組引用
 
-### 指令編碼基本原則
+### 作用域管理
 
-1. **操作碼映射**：將助記符號轉換為二進位操作碼
-2. **運算元編碼**：處理不同類型的運算元
-3. **位址模式**：處理各種位址指定方式
+組譯器需要支援區域與全域作用域：
 
-### 指令編碼表（簡化示例）
-
-```python
-OPCODES = {
-    'mov': {
-        ('reg8', 'imm8'): 0xB0,    # mov reg8, imm8
-        ('reg16', 'imm16'): 0xB8,  # mov reg16, imm16
-        ('mem', 'reg8'): 0x88,     # mov [mem], reg8
-        ('reg8', 'mem'): 0x8A,     # mov reg8, [mem]
-        ('reg16', 'reg16'): 0x89,  # mov reg16, reg16
-    },
-    'add': {
-        ('reg8', 'imm8'): 0x00,
-        ('reg16', 'imm16'): 0x01,
-        ('reg16', 'reg16'): 0x01,
-    },
-    'jmp': {
-        ('label'): 0xE9,           # near jump
-        ('label8'): 0xEB,          # short jump
-    }
+```c
+void enterScope(SymbolTable *table) {
+    SymbolTable *newScope = createSymbolTable();
+    newScope->parent = table;
+    currentScope = newScope;
 }
 
-REGISTER_CODES = {
-    'al': 0, 'cl': 1, 'dl': 2, 'bl': 3,
-    'ah': 4, 'ch': 5, 'dh': 6, 'bh': 7,
-    'ax': 0, 'cx': 1, 'dx': 2, 'bx': 3,
-    'sp': 4, 'bp': 5, 'si': 6, 'di': 7,
+void exitScope(SymbolTable *table) {
+    currentScope = table->parent;
 }
 ```
 
-### 目標碼生成器
+## 3.4 位址解析與重定位
 
-```python
-class CodeGenerator:
-    def __init__(self):
-        self.opcodes = OPCODES
-        self.reg_codes = REGISTER_CODES
-        self.output = bytearray()
-        
-    def encode_instruction(self, instruction, operands, symbol_table):
-        opcode = instruction.lower()
-        
-        if opcode == 'mov':
-            return self.encode_mov(operands, symbol_table)
-        elif opcode == 'add':
-            return self.encode_add(operands, symbol_table)
-        elif opcode == 'jmp':
-            return self.encode_jmp(operands, symbol_table)
-        else:
-            raise ValueError(f'Unknown instruction: {instruction}')
-            
-    def encode_mov(self, operands, symbol_table):
-        dest, src = operands
-        result = bytearray()
-        
-        # 判斷運算元類型並編碼
-        if dest in self.reg_codes and src in self.reg_codes:
-            result.append(0x89)  # modrm
-            modrm = 0xC0 | (self.reg_codes[dest] << 3) | self.reg_codes[src]
-            result.append(modrm)
-        elif dest in self.reg_codes and isinstance(src, int):
-            result.append(0xB0 + self.reg_codes[dest])
-            result.append(src & 0xFF)
-            
-        return result
+位址解析（Address Resolution）是將符號參照轉換為實際位址的過程，而重定位（Relocation）則是調整位址以適應不同的載入位置。
+
+### 相對位址與絕對位址
+
+組譯器需要處理兩種類型的位址：
+
+1. **絕對位址**：固定的記憶體位置
+2. **相對位址**：相對於目前位置的偏移量
+
+### 重定位表
+
+目標檔案中包含重定位資訊，供連結器使用：
+
+```c
+typedef struct RelocationEntry {
+    char *symbol;         // 需要重定位的符號
+    int offset;           // 在目標碼中的偏移量
+    RelocationType type;  // 重定位類型
+} RelocationEntry;
 ```
 
-## 3.5 位址解析
+### 位址計算
 
-### 位址類型
+位址解析的過程包括：
 
-1. **絕對位址**：實際記憶體位置
-2. **相對位址**：相對於目前位置的位移
-3. **間接位址**：位址指向的內容
-4. **基底相對位址**：基底暫存器加上位移
+1. **計算標籤位址**：根據標籤出現的位置計算其位址
+2. **計算相對位址**：計算跳躍指令的相對偏移量
+3. **處理外部參照**：解析跨模組的符號引用
 
-### 位址解析方法
+## 3.5 產生目標檔案
 
-```python
-class AddressResolver:
-    def __init__(self, symbol_table, base_address=0):
-        self.symbol_table = symbol_table
-        self.base_address = base_address
-        
-    def resolve(self, operand, current_address):
-        if isinstance(operand, int):
-            return operand
-            
-        if operand in self.symbol_table:
-            symbol = self.symbol_table[operand]
-            return symbol['address']
-            
-        # 處理相對位址
-        if isinstance(operand, dict) and operand.get('type') == 'rel':
-            target = operand['target']
-            if target in self.symbol_table:
-                target_addr = self.symbol_table[target]['address']
-                return target_addr - current_address - 2  # 相對位移
-                
-        raise ValueError(f'Cannot resolve address: {operand}')
-        
-    def calculate_relative_address(self, target, current):
-        if target in self.symbol_table:
-            return self.symbol_table[target]['address'] - current
-        return None
+目標檔案（Object File）是組譯器的輸出，包含可被連結器處理的機器碼與相關資訊。
+
+### 常見目標檔案格式
+
+1. **COFF（Common Object File Format）**：Windows 環境常用
+2. **ELF（Executable and Linkable Format）**：Unix/Linux 環境標準
+3. **Mach-O**：macOS 環境使用
+
+### 目標檔案結構
+
+目標檔案通常包含以下區段：
+
+```
++------------------+
+|  檔案頭部         |
++------------------+
+|  區段表          |
++------------------+
+|  .text 區段      |  (程式碼)
++------------------+
+|  .data 區段      |  (已初始化資料)
++------------------+
+|  .bss 區段       |  (未初始化資料)
++------------------+
+|  符號表          |
++------------------+
+|  重定位表        |
++------------------+
 ```
 
-### 重定位資訊
+### 輸出目標碼
 
-```python
-class RelocationEntry:
-    def __init__(self, offset, section, symbol, addend=0):
-        self.offset = offset
-        self.section = section
-        self.symbol = symbol
-        self.addend = addend
-        
-    def to_dict(self):
-        return {
-            'offset': self.offset,
-            'section': self.section,
-            'symbol': self.symbol,
-            'addend': self.addend
-        }
+產生目標碼的過程：
+
+```c
+void emitInstruction(FILE *output, Instruction *ins) {
+    // 將助記符轉換為機器碼
+    uint32_t machineCode = encodeInstruction(ins);
+    fwrite(&machineCode, sizeof(uint32_t), 1, output);
+}
+
+void emitRelocation(FILE *output, Symbol *sym, int offset) {
+    RelocationEntry rel = {
+        .symbol = sym->name,
+        .offset = offset,
+        .type = REL_ABSOLUTE
+    };
+    fwrite(&rel, sizeof(RelocationEntry), 1, output);
+}
 ```
