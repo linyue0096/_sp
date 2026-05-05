@@ -5,8 +5,6 @@
 * 1. 詞法分析器 (Lexer)
 Lexer 的任務是將字元流轉換為 Token。我們需要讓掃描器認識 while 這個關鍵字，並將其標記為 TK_WHILE。
 ***
-C
-// 掃描到 "while" 且後面沒有其他英數字時，建立 TK_WHILE Token
 if (strncmp(src, "while", 5) == 0 && !isalnum(src[5])) {
     current_token.type = TK_WHILE;
     src += 5;
