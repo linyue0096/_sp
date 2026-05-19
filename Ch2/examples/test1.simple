@@ -1,0 +1,22 @@
+function main() : int {
+    var x : int = 10;
+    var y : int = 20;
+
+    if (x < y) {
+        return x;
+    } else {
+        return y;
+    }
+    return 0;
+}
+
+function add(a : int, b : int) : int {
+    return a + b;
+}
+
+function fib(n : int) : int {
+    if (n <= 1) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}

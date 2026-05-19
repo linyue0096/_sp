@@ -1,0 +1,44 @@
+# Function: main
+LI R0, 10
+MOVE R1, R0
+LI R2, 20
+MOVE R3, R2
+SLT R4, R1, R3
+BEQ R4, R0, L0
+MOVE R0, R1
+RET
+J L1
+L0:
+MOVE R0, R3
+RET
+L1:
+LI R5, 0
+MOVE R0, R5
+RET
+RET
+# Function: add
+LI R0, a
+LI R1, b
+MOVE R0, R2
+RET
+RET
+# Function: fib
+LI R0, n
+LI R2, 1
+SLT R3, R1, R2
+BEQ R3, R0, L2
+MOVE R0, R1
+RET
+J L3
+L2:
+L3:
+LI R4, t3
+CALL fib
+MOVE R5, R0
+LI R6, t5
+CALL fib
+MOVE R7, R0
+MOVE R0, R0
+RET
+RET
+HALT
